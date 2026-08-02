@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aiman-labs/ergouzi-agent-skills/schemas/codex-marketplace.schema.json",
+  "title": "Codex plugin marketplace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "interface", "plugins"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayName"],
+      "properties": {
+        "displayName": { "type": "string", "minLength": 1 }
+      }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "source", "policy", "category"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "path"],
+            "properties": {
+              "source": { "const": "local" },
+              "path": {
+                "type": "string",
+                "pattern": "^\\./plugins/[a-z0-9]+(?:-[a-z0-9]+)*$"
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["installation", "authentication"],
+            "properties": {
+              "installation": {
+                "enum": ["NOT_AVAILABLE", "AVAILABLE", "INSTALLED_BY_DEFAULT"]
+              },
+              "authentication": { "enum": ["ON_INSTALL", "ON_USE"] },
+              "products": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              }
+            }
+          },
+          "category": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

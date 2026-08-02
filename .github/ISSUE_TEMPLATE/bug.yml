@@ -1,0 +1,41 @@
+name: Report a Bug
+description: Report reproducible behavior in a public Skill, Plugin, or repository tool.
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: Do not report vulnerabilities or leaked secrets here. Follow SECURITY.md instead.
+  - type: input
+    id: artifact
+    attributes:
+      label: Artifact and version
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client and version
+      placeholder: Codex 1.x / Claude Code 2.x
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal steps and sanitized inputs.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and logs
+      description: Remove credentials, tokens, private endpoints, and account data.
+    validations:
+      required: true

@@ -1,0 +1,49 @@
+name: Propose a Plugin
+description: Propose a Claude Code, Codex, or cross-platform Plugin.
+title: '[Plugin]: '
+labels: ['plugin']
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Proposed name
+      placeholder: new-api-toolkit
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target
+      options:
+        - cross-platform
+        - claude-code
+        - codex
+    validations:
+      required: true
+  - type: textarea
+    id: value
+    attributes:
+      label: User value and components
+      description: Describe the problem and expected Skills, agents, hooks, MCP servers, apps, or scripts.
+    validations:
+      required: true
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Permissions and external effects
+      description: Declare filesystem, network, authentication, process, and write access plus confirmation boundaries.
+    validations:
+      required: true
+  - type: textarea
+    id: testing
+    attributes:
+      label: Test strategy
+      description: Explain client versions, evaluation cases, local installation, and rollback verification.
+    validations:
+      required: true
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Sources and licenses
+    validations:
+      required: true

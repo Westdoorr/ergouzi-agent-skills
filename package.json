@@ -1,0 +1,32 @@
+{
+  "name": "ergouzi-agent-skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public Agent Skills and Claude Code / Codex plugins for New API and reusable workflows.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "create:skill": "node scripts/create-skill.mjs",
+    "create:plugin": "node scripts/create-plugin.mjs",
+    "catalog": "node scripts/generate-catalog.mjs",
+    "catalog:check": "node scripts/generate-catalog.mjs --check",
+    "validate": "node scripts/validate-repository.mjs",
+    "validate:spec": "node scripts/validate-spec.mjs",
+    "validate:claude": "node scripts/validate-claude.mjs",
+    "test": "node --test",
+    "lint": "markdownlint-cli2 '**/*.md'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run format:check && npm run lint && npm test && npm run validate && npm run catalog:check"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "2.1.220",
+    "ajv": "^8.20.0",
+    "markdownlint-cli2": "^0.23.2",
+    "prettier": "^3.9.6",
+    "yaml": "^2.9.0"
+  }
+}

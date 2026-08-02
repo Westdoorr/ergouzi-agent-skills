@@ -1,0 +1,7 @@
+{
+  "name": "ergouzi-agent-skills",
+  "interface": {
+    "displayName": "Ergouzi Agent Skills"
+  },
+  "plugins": []
+}

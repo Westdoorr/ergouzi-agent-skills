@@ -1,0 +1,10 @@
+{
+  "name": "ergouzi-agent-skills",
+  "owner": {
+    "name": "Aiman Labs"
+  },
+  "metadata": {
+    "description": "Public Claude Code plugins from Ergouzi Agent Skills."
+  },
+  "plugins": []
+}

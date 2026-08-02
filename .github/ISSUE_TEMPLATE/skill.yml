@@ -1,0 +1,50 @@
+name: Propose a Skill
+description: Propose a new portable Agent Skill or a substantial Skill change.
+title: '[Skill]: '
+labels: ['skill']
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Proposed name
+      description: Use lowercase letters, digits, and single hyphens.
+      placeholder: review-new-api
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the reusable problem and why ordinary documentation is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: prompts
+    attributes:
+      label: Representative prompts
+      description: Provide at least three realistic user requests that should activate the Skill.
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals and boundaries
+    validations:
+      required: true
+  - type: checkboxes
+    id: capabilities
+    attributes:
+      label: Capabilities
+      options:
+        - label: Requires network access
+        - label: Executes scripts or binaries
+        - label: Uses authentication or secrets
+        - label: Writes files or external state
+        - label: Can perform destructive or externally visible actions
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Sources and licenses
+      description: List third-party material and applicable licenses, or state that none is used.
+    validations:
+      required: true
