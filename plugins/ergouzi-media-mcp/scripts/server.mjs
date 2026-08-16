@@ -15482,7 +15482,7 @@ var StdioServerTransport = class {
 };
 
 // plugins/ergouzi-media-mcp/scripts/lib.mjs
-import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { lookup as lookupHost } from "node:dns/promises";
 import { createWriteStream } from "node:fs";
 import {
@@ -15514,11 +15514,10 @@ var AUDIO_TYPES = /* @__PURE__ */ new Set([
   "audio/flac"
 ]);
 var LOCAL_FILE_KEY = "$local_file";
-var MEDIA_MCP_VERSION = true ? "0.2.0+codex.20260816152531" : "0.2.0-dev";
+var MEDIA_MCP_VERSION = true ? "0.2.0+codex.20260816153249" : "0.2.0-dev";
 var MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1e3;
 var MAX_API_ERROR_DETAIL_CHARS = 4096;
-var MODEL_SCHEMA_CACHE = /* @__PURE__ */ new Map();
-var MODEL_SCHEMA_CACHE_HMAC_KEY = randomBytes(32);
+var MODEL_SCHEMA_CACHES = /* @__PURE__ */ new WeakMap();
 var OUTPUT_MEDIA_TYPES = /* @__PURE__ */ new Set([
   "image/avif",
   "image/jpeg",
@@ -16005,9 +16004,13 @@ async function createPrediction(credentials, model, input, idempotencyKey = rand
   }
   throw lastError;
 }
-function modelSchemaCacheKey(credentials, model) {
-  const keyFingerprint = createHmac("sha256", MODEL_SCHEMA_CACHE_HMAC_KEY).update(credentials.apiKey).digest("base64url").slice(0, 16);
-  return `${credentials.baseUrl}\0${keyFingerprint}\0${model}`;
+function modelSchemaCacheFor(credentials) {
+  let cache = MODEL_SCHEMA_CACHES.get(credentials);
+  if (!cache) {
+    cache = /* @__PURE__ */ new Map();
+    MODEL_SCHEMA_CACHES.set(credentials, cache);
+  }
+  return cache;
 }
 function modelSchemaSummary(model, details) {
   const openapiSchema = details?.latest_version?.openapi_schema;
@@ -16032,8 +16035,9 @@ async function getModelSchema(credentials, model, { refresh = false } = {}) {
     throw new MediaMcpError("refresh must be a boolean", {
       code: "INVALID_REFRESH"
     });
-  const cacheKey = modelSchemaCacheKey(credentials, model);
-  const cached2 = MODEL_SCHEMA_CACHE.get(cacheKey);
+  const cache = modelSchemaCacheFor(credentials);
+  const cacheKey = `${credentials.baseUrl}\0${model}`;
+  const cached2 = cache.get(cacheKey);
   if (!refresh && cached2 && cached2.expiresAt > Date.now()) return cached2.value;
   const [owner, name] = model.split("/");
   const details = await apiJson(
@@ -16042,7 +16046,7 @@ async function getModelSchema(credentials, model, { refresh = false } = {}) {
     `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`
   );
   const value = modelSchemaSummary(model, details);
-  MODEL_SCHEMA_CACHE.set(cacheKey, {
+  cache.set(cacheKey, {
     expiresAt: Date.now() + MODEL_SCHEMA_CACHE_TTL_MS,
     value
   });
@@ -16760,19 +16764,27 @@ async function callTool(name, args = {}, credentials) {
 // scripts/media-mcp/server-entry.mjs
 var SERVER_INFO = {
   name: "ergouzi-media-mcp",
-  version: "0.2.0+codex.20260816152531"
+  version: "0.2.0+codex.20260816153249"
 };
 var server = new Server(SERVER_INFO, {
   capabilities: { tools: { listChanged: false } },
   instructions: "Use media API tools for Ergouzi asynchronous image and video predictions. Before create_prediction, confirm that the user explicitly requested the billable task. Keep task IDs and do not resubmit an existing task."
 });
+var activeCredentials;
+async function credentialsForRequest() {
+  const loaded = await loadCredentials();
+  if (activeCredentials && activeCredentials.apiKey === loaded.apiKey && activeCredentials.baseUrl === loaded.baseUrl && activeCredentials.configFile === loaded.configFile && activeCredentials.credentialSource === loaded.credentialSource && activeCredentials.baseUrlSource === loaded.baseUrlSource)
+    return activeCredentials;
+  activeCredentials = loaded;
+  return activeCredentials;
+}
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: toolDefinitions()
 }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   let credentials;
   try {
-    credentials = await loadCredentials();
+    credentials = await credentialsForRequest();
     return mcpToolResult(
       await callTool(
         request.params.name,

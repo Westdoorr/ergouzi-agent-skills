@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lookup as lookupHost } from 'node:dns/promises';
 import { createWriteStream } from 'node:fs';
 import {
@@ -38,8 +38,7 @@ const MEDIA_MCP_VERSION =
     : '0.2.0-dev';
 const MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_API_ERROR_DETAIL_CHARS = 4_096;
-const MODEL_SCHEMA_CACHE = new Map();
-const MODEL_SCHEMA_CACHE_HMAC_KEY = randomBytes(32);
+const MODEL_SCHEMA_CACHES = new WeakMap();
 const OUTPUT_MEDIA_TYPES = new Set([
   'image/avif',
   'image/jpeg',
@@ -635,12 +634,13 @@ export async function createPrediction(
   throw lastError;
 }
 
-function modelSchemaCacheKey(credentials, model) {
-  const keyFingerprint = createHmac('sha256', MODEL_SCHEMA_CACHE_HMAC_KEY)
-    .update(credentials.apiKey)
-    .digest('base64url')
-    .slice(0, 16);
-  return `${credentials.baseUrl}\u0000${keyFingerprint}\u0000${model}`;
+function modelSchemaCacheFor(credentials) {
+  let cache = MODEL_SCHEMA_CACHES.get(credentials);
+  if (!cache) {
+    cache = new Map();
+    MODEL_SCHEMA_CACHES.set(credentials, cache);
+  }
+  return cache;
 }
 
 function modelSchemaSummary(model, details) {
@@ -682,8 +682,9 @@ export async function getModelSchema(
     throw new MediaMcpError('refresh must be a boolean', {
       code: 'INVALID_REFRESH',
     });
-  const cacheKey = modelSchemaCacheKey(credentials, model);
-  const cached = MODEL_SCHEMA_CACHE.get(cacheKey);
+  const cache = modelSchemaCacheFor(credentials);
+  const cacheKey = `${credentials.baseUrl}\u0000${model}`;
+  const cached = cache.get(cacheKey);
   if (!refresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
   const [owner, name] = model.split('/');
@@ -693,7 +694,7 @@ export async function getModelSchema(
     `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
   );
   const value = modelSchemaSummary(model, details);
-  MODEL_SCHEMA_CACHE.set(cacheKey, {
+  cache.set(cacheKey, {
     expiresAt: Date.now() + MODEL_SCHEMA_CACHE_TTL_MS,
     value,
   });

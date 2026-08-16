@@ -1,2 +1,2 @@
-plugins/ergouzi-media-mcp/scripts/server.mjs text eol=lf
-plugins/ergouzi-media-mcp/THIRD_PARTY_LICENSES.txt text eol=lf
+* text=auto eol=lf
+plugins/ergouzi-media-mcp/scripts/server.mjs -whitespace

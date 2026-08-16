@@ -24,6 +24,23 @@ const server = new Server(SERVER_INFO, {
     'Use media API tools for Ergouzi asynchronous image and video predictions. Before create_prediction, confirm that the user explicitly requested the billable task. Keep task IDs and do not resubmit an existing task.',
 });
 
+let activeCredentials;
+
+async function credentialsForRequest() {
+  const loaded = await loadCredentials();
+  if (
+    activeCredentials &&
+    activeCredentials.apiKey === loaded.apiKey &&
+    activeCredentials.baseUrl === loaded.baseUrl &&
+    activeCredentials.configFile === loaded.configFile &&
+    activeCredentials.credentialSource === loaded.credentialSource &&
+    activeCredentials.baseUrlSource === loaded.baseUrlSource
+  )
+    return activeCredentials;
+  activeCredentials = loaded;
+  return activeCredentials;
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: toolDefinitions(),
 }));
@@ -31,7 +48,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   let credentials;
   try {
-    credentials = await loadCredentials();
+    credentials = await credentialsForRequest();
     return mcpToolResult(
       await callTool(
         request.params.name,

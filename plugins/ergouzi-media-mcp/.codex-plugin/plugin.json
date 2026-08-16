@@ -1,6 +1,6 @@
 {
   "name": "ergouzi-media-mcp",
-  "version": "0.2.0+codex.20260816152531",
+  "version": "0.2.0+codex.20260816153249",
   "description": "A local Codex MCP plugin for creating, tracking, cancelling, and downloading Ergouzi image and video predictions.",
   "author": {
     "name": "Aiman Labs",

@@ -315,7 +315,7 @@ test('getModelSchema returns and caches the API input schema', async () => {
   }
 });
 
-test('getModelSchema shares cache entries only for the same API key', async () => {
+test('getModelSchema isolates cache entries between credential contexts', async () => {
   const authorizations = [];
   const api = await startServer((request, response) => {
     authorizations.push(request.headers.authorization);
@@ -330,14 +330,12 @@ test('getModelSchema shares cache entries only for the same API key', async () =
   });
 
   try {
-    await getModelSchema(
-      { baseUrl: api.baseUrl, apiKey: 'first-media-key' },
-      'ergouzi/e-video',
-    );
-    await getModelSchema(
-      { baseUrl: api.baseUrl, apiKey: 'first-media-key' },
-      'ergouzi/e-video',
-    );
+    const firstCredentials = {
+      baseUrl: api.baseUrl,
+      apiKey: 'first-media-key',
+    };
+    await getModelSchema(firstCredentials, 'ergouzi/e-video');
+    await getModelSchema(firstCredentials, 'ergouzi/e-video');
     await getModelSchema(
       { baseUrl: api.baseUrl, apiKey: 'second-media-key' },
       'ergouzi/e-video',
