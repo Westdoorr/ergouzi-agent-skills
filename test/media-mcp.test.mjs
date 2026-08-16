@@ -315,6 +315,43 @@ test('getModelSchema returns and caches the API input schema', async () => {
   }
 });
 
+test('getModelSchema shares cache entries only for the same API key', async () => {
+  const authorizations = [];
+  const api = await startServer((request, response) => {
+    authorizations.push(request.headers.authorization);
+    json(response, 200, {
+      name: 'e-video',
+      owner: 'ergouzi',
+      latest_version: {
+        id: 'version-cache-partition',
+        openapi_schema: { components: { schemas: {} } },
+      },
+    });
+  });
+
+  try {
+    await getModelSchema(
+      { baseUrl: api.baseUrl, apiKey: 'first-media-key' },
+      'ergouzi/e-video',
+    );
+    await getModelSchema(
+      { baseUrl: api.baseUrl, apiKey: 'first-media-key' },
+      'ergouzi/e-video',
+    );
+    await getModelSchema(
+      { baseUrl: api.baseUrl, apiKey: 'second-media-key' },
+      'ergouzi/e-video',
+    );
+
+    assert.deepEqual(authorizations, [
+      'Bearer first-media-key',
+      'Bearer second-media-key',
+    ]);
+  } finally {
+    await api.close();
+  }
+});
+
 test('createPrediction retries a transient response with the same idempotency key', async () => {
   const keys = [];
   let attempts = 0;

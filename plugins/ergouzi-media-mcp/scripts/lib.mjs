@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { lookup as lookupHost } from 'node:dns/promises';
 import { createWriteStream } from 'node:fs';
 import {
@@ -39,6 +39,7 @@ const MEDIA_MCP_VERSION =
 const MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_API_ERROR_DETAIL_CHARS = 4_096;
 const MODEL_SCHEMA_CACHE = new Map();
+const MODEL_SCHEMA_CACHE_HMAC_KEY = randomBytes(32);
 const OUTPUT_MEDIA_TYPES = new Set([
   'image/avif',
   'image/jpeg',
@@ -635,7 +636,7 @@ export async function createPrediction(
 }
 
 function modelSchemaCacheKey(credentials, model) {
-  const keyFingerprint = createHash('sha256')
+  const keyFingerprint = createHmac('sha256', MODEL_SCHEMA_CACHE_HMAC_KEY)
     .update(credentials.apiKey)
     .digest('base64url')
     .slice(0, 16);

@@ -15482,7 +15482,7 @@ var StdioServerTransport = class {
 };
 
 // plugins/ergouzi-media-mcp/scripts/lib.mjs
-import { createHash, randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { lookup as lookupHost } from "node:dns/promises";
 import { createWriteStream } from "node:fs";
 import {
@@ -15514,10 +15514,11 @@ var AUDIO_TYPES = /* @__PURE__ */ new Set([
   "audio/flac"
 ]);
 var LOCAL_FILE_KEY = "$local_file";
-var MEDIA_MCP_VERSION = true ? "0.2.0+codex.20260816140424" : "0.2.0-dev";
+var MEDIA_MCP_VERSION = true ? "0.2.0+codex.20260816152531" : "0.2.0-dev";
 var MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1e3;
 var MAX_API_ERROR_DETAIL_CHARS = 4096;
 var MODEL_SCHEMA_CACHE = /* @__PURE__ */ new Map();
+var MODEL_SCHEMA_CACHE_HMAC_KEY = randomBytes(32);
 var OUTPUT_MEDIA_TYPES = /* @__PURE__ */ new Set([
   "image/avif",
   "image/jpeg",
@@ -16005,7 +16006,7 @@ async function createPrediction(credentials, model, input, idempotencyKey = rand
   throw lastError;
 }
 function modelSchemaCacheKey(credentials, model) {
-  const keyFingerprint = createHash("sha256").update(credentials.apiKey).digest("base64url").slice(0, 16);
+  const keyFingerprint = createHmac("sha256", MODEL_SCHEMA_CACHE_HMAC_KEY).update(credentials.apiKey).digest("base64url").slice(0, 16);
   return `${credentials.baseUrl}\0${keyFingerprint}\0${model}`;
 }
 function modelSchemaSummary(model, details) {
@@ -16759,7 +16760,7 @@ async function callTool(name, args = {}, credentials) {
 // scripts/media-mcp/server-entry.mjs
 var SERVER_INFO = {
   name: "ergouzi-media-mcp",
-  version: "0.2.0+codex.20260816140424"
+  version: "0.2.0+codex.20260816152531"
 };
 var server = new Server(SERVER_INFO, {
   capabilities: { tools: { listChanged: false } },
