@@ -414,30 +414,47 @@ test('API errors preserve validation details and rate-limit retry guidance', asy
   }
 });
 
-test('configuration diagnostics warn about permissive credential files', async () => {
-  const temporary = await mkdtemp(
-    path.join(os.tmpdir(), 'ergouzi-mcp-config-'),
-  );
-  const configFile = path.join(temporary, 'credentials.json');
-  await writeFile(
-    configFile,
-    JSON.stringify({
-      api_key: 'test-media-key',
-      base_url: 'https://ergouzi.life',
-    }),
-  );
-  await chmod(configFile, 0o644);
+test(
+  'configuration diagnostics warn about permissive credential files',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const temporary = await mkdtemp(
+      path.join(os.tmpdir(), 'ergouzi-mcp-config-'),
+    );
+    const configFile = path.join(temporary, 'credentials.json');
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        api_key: 'test-media-key',
+        base_url: 'https://ergouzi.life',
+      }),
+    );
+    await chmod(configFile, 0o644);
 
-  const client = await loadCredentials({
-    env: { ERGOUZI_CONFIG_FILE: configFile, HOME: temporary },
-    platform: 'darwin',
-  });
-  const diagnostics = await credentialDiagnostics(client, {
-    platform: 'darwin',
-  });
-  assert.equal(diagnostics.credential_source, 'credentials_file');
-  assert.equal(diagnostics.config_file_permissions, '0644');
-  assert.match(diagnostics.warnings[0], /0600/);
+    const client = await loadCredentials({
+      env: { ERGOUZI_CONFIG_FILE: configFile, HOME: temporary },
+      platform: 'darwin',
+    });
+    const diagnostics = await credentialDiagnostics(client, {
+      platform: 'darwin',
+    });
+    assert.equal(diagnostics.credential_source, 'credentials_file');
+    assert.equal(diagnostics.config_file_permissions, '0644');
+    assert.match(diagnostics.warnings[0], /0600/);
+  },
+);
+
+test('configuration diagnostics omit POSIX permissions on Windows', async () => {
+  const diagnostics = await credentialDiagnostics(
+    {
+      baseUrl: 'https://ergouzi.life',
+      configFile: 'C:\\Users\\example\\credentials.json',
+      credentialSource: 'credentials_file',
+    },
+    { platform: 'win32' },
+  );
+  assert.equal(diagnostics.config_file_permissions, null);
+  assert.deepEqual(diagnostics.warnings, []);
 });
 
 test('check_configuration verifies credentials without returning the API key', async () => {
