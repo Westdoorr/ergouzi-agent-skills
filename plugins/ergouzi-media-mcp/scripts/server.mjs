@@ -3542,7 +3542,7 @@ var require_schemes = __commonJS({
       urnComponent.nss = (uuidComponent.uuid || "").toLowerCase();
       return urnComponent;
     }
-    var http = (
+    var http2 = (
       /** @type {SchemeHandler} */
       {
         scheme: "http",
@@ -3551,11 +3551,11 @@ var require_schemes = __commonJS({
         serialize: httpSerialize
       }
     );
-    var https = (
+    var https2 = (
       /** @type {SchemeHandler} */
       {
         scheme: "https",
-        domainHost: http.domainHost,
+        domainHost: http2.domainHost,
         parse: httpParse,
         serialize: httpSerialize
       }
@@ -3599,8 +3599,8 @@ var require_schemes = __commonJS({
     var SCHEMES = (
       /** @type {Record<SchemeName, SchemeHandler>} */
       {
-        http,
-        https,
+        http: http2,
+        https: https2,
         ws,
         wss,
         urn,
@@ -15488,11 +15488,14 @@ import { createWriteStream } from "node:fs";
 import {
   link,
   mkdir,
+  open,
   readFile,
   stat,
   unlink,
   writeFile
 } from "node:fs/promises";
+import http from "node:http";
+import https from "node:https";
 import { isIP } from "node:net";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -15865,7 +15868,15 @@ function validateMediaReference(value, allowedTypes) {
   return value;
 }
 async function detectMediaType(filePath) {
-  const data = await readFile(filePath).then((value) => value.subarray(0, 512));
+  const file = await open(filePath, "r");
+  let data;
+  try {
+    const buffer = Buffer.alloc(512);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    data = buffer.subarray(0, bytesRead);
+  } finally {
+    await file.close();
+  }
   if (data.length >= 3 && data.subarray(0, 3).equals(Buffer.from([255, 216, 255])))
     return "image/jpeg";
   if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])))
@@ -16084,7 +16095,14 @@ async function getPrediction(credentials, taskId, waitSeconds = 0) {
   const deadline = Date.now() + waitSeconds * 1e3;
   let delay = 250;
   while (true) {
-    const prediction = await apiJson(credentials, "GET", requestPath);
+    const remaining = deadline - Date.now();
+    const prediction = await apiJson(
+      credentials,
+      "GET",
+      requestPath,
+      void 0,
+      waitSeconds === 0 ? {} : { timeoutMs: Math.max(1, remaining) }
+    );
     if (waitSeconds === 0 || isTerminalStatus(prediction?.status) || Date.now() >= deadline)
       return prediction;
     await new Promise(
@@ -16176,7 +16194,7 @@ function isNonPublicIp(address) {
   }
   return value === 0n || value === 1n || value >= 0x20010db8000000000000000000000000n && value <= 0x20010db8ffffffffffffffffffffffffn || value >= 0xfc000000000000000000000000000000n && value <= 0xfdffffffffffffffffffffffffffffffn || value >= 0xfe800000000000000000000000000000n && value <= 0xfebfffffffffffffffffffffffffffffn || value >= 0xff000000000000000000000000000000n;
 }
-async function assertSafeDownloadUrl(value, { allowLocalHttp = false, lookup = lookupHost } = {}) {
+async function resolveSafeDownloadUrl(value, { allowLocalHttp = false, lookup = lookupHost } = {}) {
   let target;
   try {
     target = new URL2(value);
@@ -16202,8 +16220,8 @@ async function assertSafeDownloadUrl(value, { allowLocalHttp = false, lookup = l
     throw new MediaMcpError("Output URL must use HTTPS", {
       code: "UNSAFE_OUTPUT_URL"
     });
+  let addresses = [];
   if (isIP(target.hostname) === 0 && !loopback) {
-    let addresses;
     try {
       addresses = await lookup(target.hostname, { all: true, verbatim: true });
     } catch (error2) {
@@ -16217,11 +16235,65 @@ async function assertSafeDownloadUrl(value, { allowLocalHttp = false, lookup = l
         "Output URL hostname resolves to a private or local address",
         { code: "UNSAFE_OUTPUT_URL" }
       );
+  } else if (isIP(target.hostname) !== 0) {
+    addresses = [
+      {
+        address: target.hostname.replace(/^\[|\]$/g, ""),
+        family: isIP(target.hostname)
+      }
+    ];
   }
-  return target;
+  return { target, addresses };
+}
+async function assertSafeDownloadUrl(value, options = {}) {
+  return (await resolveSafeDownloadUrl(value, options)).target;
 }
 function sameOrigin(left, right) {
   return left.origin === right.origin;
+}
+function responseFromIncomingMessage(message, url) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(message.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== void 0) headers.set(name, value);
+  }
+  return {
+    body: Readable.toWeb(message),
+    headers,
+    ok: message.statusCode >= 200 && message.statusCode < 300,
+    status: message.statusCode,
+    url
+  };
+}
+function fetchPinned(url, addresses, { headers = {}, method = "GET", signal }) {
+  return new Promise((resolve, reject) => {
+    const address = addresses[0];
+    const transport = url.protocol === "https:" ? https : http;
+    const requestHeaders = { ...headers, host: url.host };
+    const request = transport.request(
+      {
+        headers: requestHeaders,
+        hostname: address?.address || url.hostname,
+        method,
+        path: `${url.pathname}${url.search}`,
+        port: url.port || void 0,
+        ...url.protocol === "https:" ? { servername: url.hostname } : {},
+        ...address ? {
+          lookup: (_hostname, _options, callback) => callback(null, address.address, address.family)
+        } : {}
+      },
+      (response) => resolve(responseFromIncomingMessage(response, url.toString()))
+    );
+    const abort = () => request.destroy(signal.reason);
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener("abort", abort, { once: true });
+    request.once("error", reject);
+    request.end();
+  });
 }
 async function fetchOutput(url, credentials, {
   fetchImpl = fetch,
@@ -16230,7 +16302,8 @@ async function fetchOutput(url, credentials, {
 } = {}) {
   const base = new URL2(credentials.baseUrl);
   const allowLocalHttp = base.protocol === "http:" && isLocalHostname(base.hostname);
-  let target = await assertSafeDownloadUrl(url, { allowLocalHttp, lookup });
+  let resolved = await resolveSafeDownloadUrl(url, { allowLocalHttp, lookup });
+  let target = resolved.target;
   const timeoutError = new MediaMcpError("Output download timed out", {
     code: "DOWNLOAD_TIMEOUT"
   });
@@ -16245,7 +16318,10 @@ async function fetchOutput(url, credentials, {
       };
       let response;
       try {
-        response = await fetchImpl(target, {
+        response = fetchImpl === fetch ? await fetchPinned(target, resolved.addresses, {
+          headers,
+          signal: controller.signal
+        }) : await fetchImpl(target, {
           headers,
           redirect: "manual",
           signal: controller.signal
@@ -16258,10 +16334,10 @@ async function fetchOutput(url, credentials, {
         );
       }
       if (response.status < 300 || response.status >= 400) {
-        const finalTarget = await assertSafeDownloadUrl(
-          response.url || target.toString(),
-          { allowLocalHttp, lookup }
-        );
+        const finalTarget = fetchImpl === fetch ? target : await assertSafeDownloadUrl(response.url || target.toString(), {
+          allowLocalHttp,
+          lookup
+        });
         return {
           response,
           target: finalTarget,
@@ -16281,10 +16357,11 @@ async function fetchOutput(url, credentials, {
           "Output download redirect did not include a location",
           { code: "INVALID_REDIRECT" }
         );
-      target = await assertSafeDownloadUrl(
+      resolved = await resolveSafeDownloadUrl(
         new URL2(location, target).toString(),
         { allowLocalHttp, lookup }
       );
+      target = resolved.target;
     }
   } catch (error2) {
     clearTimeout(timer);

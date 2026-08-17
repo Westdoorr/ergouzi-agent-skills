@@ -567,6 +567,31 @@ test('prediction status, cancellation, and download preserve task lifecycle boun
   }
 });
 
+test('prediction polling bounds each request by the remaining wait budget', async () => {
+  let responseTimer;
+  const api = await startServer((request, response) => {
+    if (request.url === '/customer/v1/predictions/task_slow') {
+      responseTimer = setTimeout(
+        () => json(response, 200, { status: 'processing' }),
+        1_500,
+      );
+      return;
+    }
+    json(response, 404, { error: 'not found' });
+  });
+  const started = Date.now();
+  try {
+    await assert.rejects(
+      getPrediction(credentials(api.baseUrl), 'task_slow', 1),
+      /timed out/,
+    );
+    assert.ok(Date.now() - started < 1_300);
+  } finally {
+    clearTimeout(responseTimer);
+    await api.close();
+  }
+});
+
 test('downloadPrediction rejects empty and invalid media outputs', async () => {
   const api = await startServer((request, response) => {
     if (request.url === '/customer/v1/predictions/task_no_outputs') {

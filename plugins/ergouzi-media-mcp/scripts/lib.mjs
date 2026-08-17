@@ -4,11 +4,14 @@ import { createWriteStream } from 'node:fs';
 import {
   link,
   mkdir,
+  open,
   readFile,
   stat,
   unlink,
   writeFile,
 } from 'node:fs/promises';
+import http from 'node:http';
+import https from 'node:https';
 import { isIP } from 'node:net';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -444,7 +447,15 @@ function validateMediaReference(value, allowedTypes) {
 }
 
 async function detectMediaType(filePath) {
-  const data = await readFile(filePath).then((value) => value.subarray(0, 512));
+  const file = await open(filePath, 'r');
+  let data;
+  try {
+    const buffer = Buffer.alloc(512);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    data = buffer.subarray(0, bytesRead);
+  } finally {
+    await file.close();
+  }
   if (
     data.length >= 3 &&
     data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
@@ -740,7 +751,14 @@ export async function getPrediction(credentials, taskId, waitSeconds = 0) {
   const deadline = Date.now() + waitSeconds * 1000;
   let delay = 250;
   while (true) {
-    const prediction = await apiJson(credentials, 'GET', requestPath);
+    const remaining = deadline - Date.now();
+    const prediction = await apiJson(
+      credentials,
+      'GET',
+      requestPath,
+      undefined,
+      waitSeconds === 0 ? {} : { timeoutMs: Math.max(1, remaining) },
+    );
     if (
       waitSeconds === 0 ||
       isTerminalStatus(prediction?.status) ||
@@ -885,7 +903,7 @@ function isNonPublicIp(address) {
   );
 }
 
-export async function assertSafeDownloadUrl(
+async function resolveSafeDownloadUrl(
   value,
   { allowLocalHttp = false, lookup = lookupHost } = {},
 ) {
@@ -918,8 +936,8 @@ export async function assertSafeDownloadUrl(
     throw new MediaMcpError('Output URL must use HTTPS', {
       code: 'UNSAFE_OUTPUT_URL',
     });
+  let addresses = [];
   if (isIP(target.hostname) === 0 && !loopback) {
-    let addresses;
     try {
       addresses = await lookup(target.hostname, { all: true, verbatim: true });
     } catch (error) {
@@ -937,12 +955,73 @@ export async function assertSafeDownloadUrl(
         'Output URL hostname resolves to a private or local address',
         { code: 'UNSAFE_OUTPUT_URL' },
       );
+  } else if (isIP(target.hostname) !== 0) {
+    addresses = [
+      {
+        address: target.hostname.replace(/^\[|\]$/g, ''),
+        family: isIP(target.hostname),
+      },
+    ];
   }
-  return target;
+  return { target, addresses };
+}
+
+export async function assertSafeDownloadUrl(value, options = {}) {
+  return (await resolveSafeDownloadUrl(value, options)).target;
 }
 
 function sameOrigin(left, right) {
   return left.origin === right.origin;
+}
+
+function responseFromIncomingMessage(message, url) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(message.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, item);
+    } else if (value !== undefined) headers.set(name, value);
+  }
+  return {
+    body: Readable.toWeb(message),
+    headers,
+    ok: message.statusCode >= 200 && message.statusCode < 300,
+    status: message.statusCode,
+    url,
+  };
+}
+
+function fetchPinned(url, addresses, { headers = {}, method = 'GET', signal }) {
+  return new Promise((resolve, reject) => {
+    const address = addresses[0];
+    const transport = url.protocol === 'https:' ? https : http;
+    const requestHeaders = { ...headers, host: url.host };
+    const request = transport.request(
+      {
+        headers: requestHeaders,
+        hostname: address?.address || url.hostname,
+        method,
+        path: `${url.pathname}${url.search}`,
+        port: url.port || undefined,
+        ...(url.protocol === 'https:' ? { servername: url.hostname } : {}),
+        ...(address
+          ? {
+              lookup: (_hostname, _options, callback) =>
+                callback(null, address.address, address.family),
+            }
+          : {}),
+      },
+      (response) =>
+        resolve(responseFromIncomingMessage(response, url.toString())),
+    );
+    const abort = () => request.destroy(signal.reason);
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+    request.once('error', reject);
+    request.end();
+  });
 }
 
 export async function fetchOutput(
@@ -957,7 +1036,8 @@ export async function fetchOutput(
   const base = new URL(credentials.baseUrl);
   const allowLocalHttp =
     base.protocol === 'http:' && isLocalHostname(base.hostname);
-  let target = await assertSafeDownloadUrl(url, { allowLocalHttp, lookup });
+  let resolved = await resolveSafeDownloadUrl(url, { allowLocalHttp, lookup });
+  let target = resolved.target;
   const timeoutError = new MediaMcpError('Output download timed out', {
     code: 'DOWNLOAD_TIMEOUT',
   });
@@ -974,11 +1054,17 @@ export async function fetchOutput(
       };
       let response;
       try {
-        response = await fetchImpl(target, {
-          headers,
-          redirect: 'manual',
-          signal: controller.signal,
-        });
+        response =
+          fetchImpl === fetch
+            ? await fetchPinned(target, resolved.addresses, {
+                headers,
+                signal: controller.signal,
+              })
+            : await fetchImpl(target, {
+                headers,
+                redirect: 'manual',
+                signal: controller.signal,
+              });
       } catch (error) {
         if (controller.signal.aborted) throw timeoutError;
         throw new MediaMcpError(
@@ -987,10 +1073,13 @@ export async function fetchOutput(
         );
       }
       if (response.status < 300 || response.status >= 400) {
-        const finalTarget = await assertSafeDownloadUrl(
-          response.url || target.toString(),
-          { allowLocalHttp, lookup },
-        );
+        const finalTarget =
+          fetchImpl === fetch
+            ? target
+            : await assertSafeDownloadUrl(response.url || target.toString(), {
+                allowLocalHttp,
+                lookup,
+              });
         return {
           response,
           target: finalTarget,
@@ -1009,10 +1098,11 @@ export async function fetchOutput(
           'Output download redirect did not include a location',
           { code: 'INVALID_REDIRECT' },
         );
-      target = await assertSafeDownloadUrl(
+      resolved = await resolveSafeDownloadUrl(
         new URL(location, target).toString(),
         { allowLocalHttp, lookup },
       );
+      target = resolved.target;
     }
   } catch (error) {
     clearTimeout(timer);
