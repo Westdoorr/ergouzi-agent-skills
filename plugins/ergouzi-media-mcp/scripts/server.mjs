@@ -16266,7 +16266,7 @@ function isNonPublicIp(address) {
       ].join(".")
     );
   }
-  return value === 0n || value === 1n || value >= 0x20010db8000000000000000000000000n && value <= 0x20010db8ffffffffffffffffffffffffn || value >= 0xfc000000000000000000000000000000n && value <= 0xfdffffffffffffffffffffffffffffffn || value >= 0xfe800000000000000000000000000000n && value <= 0xfebfffffffffffffffffffffffffffffn || value >= 0xff000000000000000000000000000000n;
+  return value >> 125n !== 1n;
 }
 async function resolveSafeDownloadUrl(value, { allowLocalHttp = false, lookup = lookupHost } = {}) {
   let target;
@@ -16508,6 +16508,11 @@ function extensionFor(contentType, sourceUrl) {
   const suffix = path.extname(new URL2(sourceUrl).pathname).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(suffix) ? suffix : ".bin";
 }
+function destinationForDetectedMediaType(destination, mediaType) {
+  if (path.extname(destination).toLowerCase() !== ".bin") return destination;
+  const extension = extensionFor(mediaType, "https://ergouzi.life/output");
+  return `${destination.slice(0, -4)}${extension}`;
+}
 function canonicalMediaType(contentType) {
   const mediaType = String(contentType || "").split(";", 1)[0].trim().toLowerCase();
   return mediaType === "audio/x-wav" ? "audio/wav" : mediaType;
@@ -16599,7 +16604,10 @@ async function downloadOne(response, destination, signal) {
         `Generated output signature does not match content type: ${declaredType}`,
         { code: "INVALID_OUTPUT_MEDIA" }
       );
-    const published = await publishTemporaryFile(temporary, destination);
+    const published = await publishTemporaryFile(
+      temporary,
+      destinationForDetectedMediaType(destination, mediaType)
+    );
     return {
       path: path.resolve(published),
       bytes: byteLimit.total,
@@ -16936,8 +16944,10 @@ async function callTool(name, args = {}, credentials) {
       code: "MISSING_CREDENTIALS"
     });
   switch (name) {
-    case "list_models":
-      return apiJson(credentials, "GET", "/customer/v1/models");
+    case "list_models": {
+      const models = await apiJson(credentials, "GET", "/customer/v1/models");
+      return Array.isArray(models) ? { results: models } : models;
+    }
     case "get_model_schema":
       return getModelSchema(credentials, args.model, {
         refresh: args.refresh ?? false

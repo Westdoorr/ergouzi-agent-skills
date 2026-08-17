@@ -113,6 +113,22 @@ test('MCP tool results include structured content for successful objects', () =>
   assert.equal(failure.isError, true);
 });
 
+test('list_models wraps bare API arrays for structured MCP results', async () => {
+  const api = await startServer((request, response) => {
+    assert.equal(request.url, '/customer/v1/models');
+    json(response, 200, [{ owner: 'ergouzi', name: 'e-image' }]);
+  });
+  try {
+    const models = await callTool('list_models', {}, credentials(api.baseUrl));
+    assert.deepEqual(models, {
+      results: [{ owner: 'ergouzi', name: 'e-image' }],
+    });
+    assert.deepEqual(mcpToolResult(models).structuredContent, models);
+  } finally {
+    await api.close();
+  }
+});
+
 test('createPrediction converts documented local media and reuses an idempotency key', async () => {
   const seen = [];
   const api = await startServer(async (request, response) => {
@@ -757,6 +773,44 @@ test('downloadPrediction accepts chunked media outputs without Content-Length', 
   }
 });
 
+test('downloadPrediction uses detected media extensions for generic outputs', async () => {
+  const body = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01,
+  ]);
+  const external = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/octet-stream' });
+    response.end(body);
+  });
+  const api = await startServer((request, response) => {
+    if (request.url === '/customer/v1/predictions/task_generic') {
+      json(response, 200, {
+        id: 'task_generic',
+        status: 'succeeded',
+        output: `${external.baseUrl}/asset`,
+      });
+      return;
+    }
+    json(response, 404, { error: 'not found' });
+  });
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-mcp-generic-output-'),
+  );
+
+  try {
+    const downloaded = await downloadPrediction(
+      credentials(api.baseUrl),
+      'task_generic',
+      temporary,
+    );
+    assert.equal(path.extname(downloaded.files[0]), '.png');
+    assert.deepEqual(await readFile(downloaded.files[0]), body);
+  } finally {
+    await api.close();
+    await external.close();
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('downloadPrediction rejects empty and invalid media outputs', async () => {
   const api = await startServer((request, response) => {
     if (request.url === '/customer/v1/predictions/task_no_outputs') {
@@ -885,6 +939,13 @@ test('download URL validation rejects public hostnames that resolve to private a
       allowLocalHttp: false,
       lookup: async () => [{ address: '169.254.169.254', family: 4 }],
     }),
+    /private or local address/,
+  );
+});
+
+test('download URL validation rejects non-global IPv6 addresses', async () => {
+  await assert.rejects(
+    assertSafeDownloadUrl('https://[fec0::1]/result.png'),
     /private or local address/,
   );
 });
