@@ -36,6 +36,27 @@ const AUDIO_TYPES = new Set([
   'audio/flac',
 ]);
 const LOCAL_FILE_KEY = '$local_file';
+const FORBIDDEN_INPUT_FIELDS = new Set(['hf_api_token']);
+const MP4_BRANDS = new Set([
+  'avc1',
+  'cmfc',
+  'cmfs',
+  'dash',
+  'f4v ',
+  'iso2',
+  'iso3',
+  'iso4',
+  'iso5',
+  'iso6',
+  'iso7',
+  'iso8',
+  'isom',
+  'm4v ',
+  'mp41',
+  'mp42',
+  'mmp4',
+  'msdh',
+]);
 const MEDIA_MCP_VERSION =
   typeof __ERGOUZI_MEDIA_MCP_VERSION__ === 'string'
     ? __ERGOUZI_MEDIA_MCP_VERSION__
@@ -478,7 +499,7 @@ async function detectMediaType(filePath) {
     const brand = data.subarray(8, 12).toString().toLowerCase();
     if (brand === 'avif' || brand === 'avis') return 'image/avif';
     if (brand === 'qt  ') return 'video/quicktime';
-    return 'video/mp4';
+    if (MP4_BRANDS.has(brand)) return 'video/mp4';
   }
   if (data.subarray(0, 4).toString() === 'fLaC') return 'audio/flac';
   if (
@@ -518,7 +539,7 @@ async function prepareMediaValue(value, field) {
       `Media input must be an HTTPS URL, data URI, or ${LOCAL_FILE_KEY} object`,
       { code: 'INVALID_MEDIA_INPUT' },
     );
-  const filePath = path.resolve(value[LOCAL_FILE_KEY]);
+  const filePath = path.resolve(expandHomePath(value[LOCAL_FILE_KEY]));
   const fileInfo = await stat(filePath).catch((error) => {
     throw new MediaMcpError(`Local media file does not exist: ${filePath}`, {
       code: 'INVALID_MEDIA_FILE',
@@ -554,6 +575,23 @@ function containsLocalPlaceholder(value) {
   return Object.values(value).some(containsLocalPlaceholder);
 }
 
+function forbiddenInputField(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const field = forbiddenInputField(item);
+      if (field) return field;
+    }
+    return null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  for (const [name, item] of Object.entries(value)) {
+    if (FORBIDDEN_INPUT_FIELDS.has(name)) return name;
+    const field = forbiddenInputField(item);
+    if (field) return field;
+  }
+  return null;
+}
+
 async function encodePreparedMedia(value) {
   if (Array.isArray(value)) return Promise.all(value.map(encodePreparedMedia));
   if (
@@ -579,6 +617,12 @@ async function encodePreparedMedia(value) {
 
 export async function resolveMediaInputs(model, input) {
   assertObject(input, 'input must be a JSON object');
+  const blockedField = forbiddenInputField(input);
+  if (blockedField)
+    throw new MediaMcpError(
+      `${blockedField} is not accepted; use the configured Ergouzi API key`,
+      { code: 'FORBIDDEN_INPUT_FIELD' },
+    );
   const fields = MODEL_MEDIA_FIELDS[model] || {};
   const prepared = { ...input };
   for (const [name, field] of Object.entries(fields)) {
@@ -751,8 +795,11 @@ export async function getPrediction(credentials, taskId, waitSeconds = 0) {
   const requestPath = `/customer/v1/predictions/${encodeURIComponent(taskId)}`;
   const deadline = Date.now() + waitSeconds * 1000;
   let delay = 250;
+  let lastPrediction;
   while (true) {
     const remaining = deadline - Date.now();
+    if (waitSeconds > 0 && remaining <= 0 && lastPrediction)
+      return lastPrediction;
     const prediction = await apiJson(
       credentials,
       'GET',
@@ -760,6 +807,7 @@ export async function getPrediction(credentials, taskId, waitSeconds = 0) {
       undefined,
       waitSeconds === 0 ? {} : { timeoutMs: Math.max(1, remaining) },
     );
+    lastPrediction = prediction;
     if (
       waitSeconds === 0 ||
       isTerminalStatus(prediction?.status) ||

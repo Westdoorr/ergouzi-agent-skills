@@ -90,7 +90,8 @@ After the check succeeds, use an explicit output directory:
 Use ergouzi/e-image to create a rainy Shanghai street at night, then download the completed result to /path/to/outputs.
 ```
 
-For local image, video, or audio input, provide the absolute path in the
+For local image, video, or audio input, provide an absolute path or a
+`~/...` home-relative path in the
 request to Codex. It passes the path only through the documented
 `$local_file` media fields, rather than treating arbitrary JSON fields as files.
 
@@ -131,8 +132,10 @@ file and then atomically renamed.
   private, local, reserved, and mixed public/private DNS answers are rejected.
 - The 120-second download timeout remains active while response bytes are
   streamed to disk, and partial files are removed on failure.
-- Local media paths must resolve to regular files and are signature-checked
+- Local media paths, including `~/...` home-relative paths, must resolve to regular files and are signature-checked
   before conversion to a data URI.
+- Upstream provider tokens, including `hf_api_token`, are rejected before the
+  request is submitted.
 - A `$local_file` placeholder is accepted only as the sole value of a documented
   media field; every other occurrence is rejected before the request is sent.
 - API validation details and `Retry-After` guidance are returned with failed

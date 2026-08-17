@@ -188,6 +188,7 @@ test('every supported model accepts only its documented local media fields', asy
   const audioPath = path.join(temporary, 'source.mp3');
   const video = Buffer.alloc(16);
   video.write('ftyp', 4);
+  video.write('isom', 8);
 
   await Promise.all([
     writeFile(
@@ -255,6 +256,44 @@ test('every supported model accepts only its documented local media fields', asy
   }
 });
 
+test('local media expands home paths and rejects non-MP4 ISO-BMFF brands', async () => {
+  const temporary = await mkdtemp(
+    path.join(os.homedir(), 'ergouzi-mcp-home-media-'),
+  );
+  const imagePath = path.join(temporary, 'source.png');
+  const nonVideoPath = path.join(temporary, 'source.heic');
+  const nonVideo = Buffer.alloc(16);
+  nonVideo.write('ftyp', 4);
+  nonVideo.write('heic', 8);
+  await Promise.all([
+    writeFile(
+      imagePath,
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    ),
+    writeFile(nonVideoPath, nonVideo),
+  ]);
+
+  try {
+    const resolved = await resolveMediaInputs('ergouzi/e-image-edit', {
+      images: [
+        {
+          $local_file: `~/${path.basename(temporary)}/${path.basename(imagePath)}`,
+        },
+      ],
+    });
+    assert.match(resolved.images[0], /^data:image\/png;base64,/);
+    await assert.rejects(
+      resolveMediaInputs('ergouzi/e-video-animate', {
+        video: { $local_file: nonVideoPath },
+        image: { $local_file: imagePath },
+      }),
+      /Unsupported local media type/,
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('createPrediction rejects local file placeholders in unknown model fields', async () => {
   await assert.rejects(
     createPrediction(
@@ -271,6 +310,26 @@ test('createPrediction rejects local file placeholders in unknown model fields',
     }),
     /documented media fields/,
   );
+});
+
+test('createPrediction rejects upstream provider tokens before submitting', async () => {
+  let requests = 0;
+  const api = await startServer((_request, response) => {
+    requests += 1;
+    json(response, 201, { id: 'task_unexpected', status: 'starting' });
+  });
+  try {
+    await assert.rejects(
+      createPrediction(credentials(api.baseUrl), 'ergouzi/e-image', {
+        prompt: 'do not submit',
+        hf_api_token: 'provider-secret',
+      }),
+      /hf_api_token is not accepted/,
+    );
+    assert.equal(requests, 0);
+  } finally {
+    await api.close();
+  }
 });
 
 test('getModelSchema returns and caches the API input schema', async () => {
@@ -609,6 +668,32 @@ test('prediction polling bounds each request by the remaining wait budget', asyn
     assert.ok(Date.now() - started < 1_300);
   } finally {
     clearTimeout(responseTimer);
+    await api.close();
+  }
+});
+
+test('prediction polling returns its last state after the wait budget expires', async () => {
+  const timers = new Set();
+  const api = await startServer((request, response) => {
+    if (request.url === '/customer/v1/predictions/task_processing') {
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        json(response, 200, { id: 'task_processing', status: 'processing' });
+      }, 10);
+      timers.add(timer);
+      return;
+    }
+    json(response, 404, { error: 'not found' });
+  });
+  try {
+    const prediction = await getPrediction(
+      credentials(api.baseUrl),
+      'task_processing',
+      1,
+    );
+    assert.equal(prediction.status, 'processing');
+  } finally {
+    for (const timer of timers) clearTimeout(timer);
     await api.close();
   }
 });

@@ -115,6 +115,7 @@ create_prediction -> get_prediction -> download_prediction
 
 MCP 只会在已记录的媒体字段中将本地路径传递为 `$local_file`，不会把任意 JSON 字段当作
 本地文件。较大的文件应使用 HTTPS URL。
+本地路径可使用绝对路径或 `~/...` 形式。`hf_api_token` 等上游提供商令牌会在请求提交前被拒绝。
 
 每个本地文件最大为 3 MiB；本地文件转换成 Base64 后，完整 JSON `input` 最大为 4 MiB；
 每个下载结果最大为 2 GiB。`ergouzi/e-video` 支持本地 `image`、
