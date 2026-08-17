@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rm,
   writeFile,
 } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -22,6 +23,7 @@ import {
   credentialDiagnostics,
   createPrediction,
   downloadPrediction,
+  fetchPinned,
   fetchOutput,
   getModelSchema,
   getPrediction,
@@ -529,6 +531,9 @@ test('prediction status, cancellation, and download preserve task lifecycle boun
   const temporary = await mkdtemp(
     path.join(os.tmpdir(), 'ergouzi-mcp-download-'),
   );
+  const homeTemporary = await mkdtemp(
+    path.join(os.homedir(), 'ergouzi-mcp-home-download-'),
+  );
 
   try {
     const client = credentials(api.baseUrl);
@@ -561,9 +566,21 @@ test('prediction status, cancellation, and download preserve task lifecycle boun
       JSON.parse(await readFile(downloaded.receipt, 'utf8')).task_id,
       'task_download',
     );
+
+    const homeDownloaded = await downloadPrediction(
+      client,
+      'task_download',
+      `~/${path.basename(homeTemporary)}`,
+    );
+    assert.equal(
+      await realpath(homeDownloaded.files[0]),
+      await realpath(path.join(homeTemporary, 'result-1.png')),
+    );
   } finally {
     await api.close();
     await external.close();
+    await rm(temporary, { recursive: true, force: true });
+    await rm(homeTemporary, { recursive: true, force: true });
   }
 });
 
@@ -722,6 +739,30 @@ test('download URL validation rejects public hostnames that resolve to private a
     }),
     /private or local address/,
   );
+});
+
+test('pinned downloads try each validated address', async () => {
+  const body = Buffer.from('pinned output');
+  const output = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-length': body.length });
+    response.end(body);
+  });
+  try {
+    const response = await fetchPinned(
+      new URL(`${output.baseUrl}/result.png`),
+      [
+        { address: '::1', family: 6 },
+        { address: '127.0.0.1', family: 4 },
+      ],
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      Buffer.from(await new Response(response.body).arrayBuffer()),
+      body,
+    );
+  } finally {
+    await output.close();
+  }
 });
 
 test('output downloads abort when the configured timeout expires', async () => {

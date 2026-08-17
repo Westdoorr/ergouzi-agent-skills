@@ -15497,6 +15497,7 @@ import {
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
+import { homedir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable, Transform } from "node:stream";
@@ -16266,34 +16267,47 @@ function responseFromIncomingMessage(message, url) {
     url
   };
 }
-function fetchPinned(url, addresses, { headers = {}, method = "GET", signal }) {
-  return new Promise((resolve, reject) => {
-    const address = addresses[0];
-    const transport = url.protocol === "https:" ? https : http;
-    const requestHeaders = { ...headers, host: url.host };
-    const request = transport.request(
-      {
-        headers: requestHeaders,
-        hostname: address?.address || url.hostname,
-        method,
-        path: `${url.pathname}${url.search}`,
-        port: url.port || void 0,
-        ...url.protocol === "https:" ? { servername: url.hostname } : {},
-        ...address ? {
-          lookup: (_hostname, _options, callback) => callback(null, address.address, address.family)
-        } : {}
-      },
-      (response) => resolve(responseFromIncomingMessage(response, url.toString()))
-    );
-    const abort = () => request.destroy(signal.reason);
-    if (signal?.aborted) {
-      abort();
-      return;
+async function fetchPinned(url, addresses = [], { headers = {}, method = "GET", signal } = {}) {
+  const candidates = addresses.length > 0 ? addresses : [void 0];
+  let lastError;
+  for (const address of candidates) {
+    if (signal?.aborted) throw signal.reason;
+    try {
+      return await new Promise((resolve, reject) => {
+        const transport = url.protocol === "https:" ? https : http;
+        const requestHeaders = { ...headers, host: url.host };
+        const request = transport.request(
+          {
+            agent: false,
+            headers: requestHeaders,
+            hostname: address?.address || url.hostname,
+            method,
+            path: `${url.pathname}${url.search}`,
+            port: url.port || void 0,
+            ...url.protocol === "https:" ? { servername: url.hostname } : {},
+            ...address ? {
+              lookup: (_hostname, _options, callback) => callback(null, address.address, address.family)
+            } : {}
+          },
+          (response) => {
+            signal?.removeEventListener("abort", abort);
+            resolve(responseFromIncomingMessage(response, url.toString()));
+          }
+        );
+        const abort = () => request.destroy(signal?.reason);
+        signal?.addEventListener("abort", abort, { once: true });
+        request.once("error", (error2) => {
+          signal?.removeEventListener("abort", abort);
+          reject(error2);
+        });
+        request.end();
+      });
+    } catch (error2) {
+      if (signal?.aborted) throw signal.reason || error2;
+      lastError = error2;
     }
-    signal?.addEventListener("abort", abort, { once: true });
-    request.once("error", reject);
-    request.end();
-  });
+  }
+  throw lastError;
 }
 async function fetchOutput(url, credentials, {
   fetchImpl = fetch,
@@ -16505,6 +16519,12 @@ function outputUrls(output) {
     { code: "INVALID_OUTPUT" }
   );
 }
+function expandHomePath(value) {
+  const text = String(value);
+  if (!/^~(?:$|[\\/])/.test(text)) return text;
+  const home = homedir();
+  return text === "~" ? home : path.join(home, text.slice(2));
+}
 async function downloadPrediction(credentials, taskId, outputDir = path.join(process.cwd(), "outputs", "ergouzi-media-mcp")) {
   validateTaskId(taskId);
   const prediction = await getPrediction(credentials, taskId, 0);
@@ -16513,7 +16533,7 @@ async function downloadPrediction(credentials, taskId, outputDir = path.join(pro
       `Prediction ${taskId} is not succeeded (status: ${prediction?.status || "unknown"})`,
       { code: "PREDICTION_NOT_READY" }
     );
-  const outputDirectory = path.resolve(String(outputDir));
+  const outputDirectory = path.resolve(expandHomePath(outputDir));
   await mkdir(outputDirectory, { recursive: true });
   const files = [];
   const downloads = [];
