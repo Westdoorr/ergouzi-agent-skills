@@ -84,6 +84,10 @@ test('media MCP exposes stable prediction and diagnostic tools', () => {
     assert.equal(tool.inputSchema.additionalProperties, false);
     assert.equal(tool.outputSchema.type, 'object');
   }
+  const cancellation = toolDefinitions().find(
+    (tool) => tool.name === 'cancel_prediction',
+  );
+  assert.match(cancellation.description, /explicit user confirmation/);
 });
 
 test('MCP tool results include structured content for successful objects', () => {
@@ -609,6 +613,43 @@ test('prediction polling bounds each request by the remaining wait budget', asyn
   }
 });
 
+test('downloadPrediction accepts chunked media outputs without Content-Length', async () => {
+  const body = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01,
+  ]);
+  const external = await startServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'image/png' });
+    response.end(body);
+  });
+  const api = await startServer((request, response) => {
+    if (request.url === '/customer/v1/predictions/task_chunked') {
+      json(response, 200, {
+        id: 'task_chunked',
+        status: 'succeeded',
+        output: `${external.baseUrl}/result.png`,
+      });
+      return;
+    }
+    json(response, 404, { error: 'not found' });
+  });
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-mcp-chunked-output-'),
+  );
+
+  try {
+    const downloaded = await downloadPrediction(
+      credentials(api.baseUrl),
+      'task_chunked',
+      temporary,
+    );
+    assert.deepEqual(await readFile(downloaded.files[0]), body);
+  } finally {
+    await api.close();
+    await external.close();
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('downloadPrediction rejects empty and invalid media outputs', async () => {
   const api = await startServer((request, response) => {
     if (request.url === '/customer/v1/predictions/task_no_outputs') {
@@ -837,6 +878,10 @@ test('bundled SDK server completes MCP initialization after the plugin is copied
     .map((line) => JSON.parse(line));
   assert.equal(responses[0].result.serverInfo.name, 'ergouzi-media-mcp');
   assert.equal(responses[0].result.serverInfo.version, manifest.version);
+  assert.match(
+    responses[0].result.instructions,
+    /Before create_prediction or cancel_prediction, confirm/,
+  );
   assert.equal(responses[1].id, 2);
   assert.deepEqual(
     responses[1].result.tools.map((tool) => tool.name),

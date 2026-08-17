@@ -16455,13 +16455,14 @@ var ByteLimitTransform = class extends Transform {
   }
 };
 async function downloadOne(response, destination, signal) {
-  const length = Number(response.headers.get("content-length"));
-  if (Number.isFinite(length) && length > MAX_OUTPUT_BYTES)
+  const contentLength = response.headers.get("content-length")?.trim();
+  const length = contentLength && /^[0-9]+$/.test(contentLength) ? Number(contentLength) : null;
+  if (length !== null && length > MAX_OUTPUT_BYTES)
     throw new MediaMcpError(
       "Generated output exceeds the 2 GiB download limit",
       { code: "OUTPUT_TOO_LARGE" }
     );
-  if (Number.isFinite(length) && length === 0)
+  if (length === 0)
     throw new MediaMcpError("Generated output is empty", {
       code: "EMPTY_OUTPUT"
     });
@@ -16766,7 +16767,7 @@ function toolDefinitions() {
     },
     {
       name: "cancel_prediction",
-      description: "Request cancellation of one existing Ergouzi prediction.",
+      description: "Cancel one existing Ergouzi prediction after explicit user confirmation.",
       inputSchema: {
         type: "object",
         properties: {
@@ -16865,7 +16866,7 @@ var SERVER_INFO = {
 };
 var server = new Server(SERVER_INFO, {
   capabilities: { tools: { listChanged: false } },
-  instructions: "Use media API tools for Ergouzi asynchronous image and video predictions. Before create_prediction, confirm that the user explicitly requested the billable task. Keep task IDs and do not resubmit an existing task."
+  instructions: "Use media API tools for Ergouzi asynchronous image and video predictions. Before create_prediction or cancel_prediction, confirm that the user explicitly requested the billable or destructive action. Keep task IDs and do not resubmit an existing task."
 });
 var activeCredentials;
 async function credentialsForRequest() {

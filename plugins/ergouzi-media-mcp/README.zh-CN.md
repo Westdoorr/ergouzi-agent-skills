@@ -67,7 +67,7 @@ node scripts/server.mjs
 | `get_model_schema`    | 查询某个模型实时的输入和输出 Schema。     |
 | `create_prediction`   | 创建一次图片或视频异步任务并返回任务 ID。 |
 | `get_prediction`      | 查询任务状态，也可以进行有上限的等待。    |
-| `cancel_prediction`   | 请求取消一个任务。                        |
+| `cancel_prediction`   | 在用户明确确认后取消一个任务。            |
 | `download_prediction` | 下载成功结果并写入本地回执。              |
 
 首次使用时先执行：
@@ -87,6 +87,8 @@ node scripts/server.mjs
 ```text
 create_prediction -> get_prediction -> download_prediction
 ```
+
+创建计费任务或取消已有任务前，Codex 会要求用户明确确认。
 
 ## 图片和视频示例
 

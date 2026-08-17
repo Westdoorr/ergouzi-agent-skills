@@ -1209,13 +1209,17 @@ class ByteLimitTransform extends Transform {
 }
 
 async function downloadOne(response, destination, signal) {
-  const length = Number(response.headers.get('content-length'));
-  if (Number.isFinite(length) && length > MAX_OUTPUT_BYTES)
+  const contentLength = response.headers.get('content-length')?.trim();
+  const length =
+    contentLength && /^[0-9]+$/.test(contentLength)
+      ? Number(contentLength)
+      : null;
+  if (length !== null && length > MAX_OUTPUT_BYTES)
     throw new MediaMcpError(
       'Generated output exceeds the 2 GiB download limit',
       { code: 'OUTPUT_TOO_LARGE' },
     );
-  if (Number.isFinite(length) && length === 0)
+  if (length === 0)
     throw new MediaMcpError('Generated output is empty', {
       code: 'EMPTY_OUTPUT',
     });
@@ -1549,7 +1553,8 @@ export function toolDefinitions() {
     },
     {
       name: 'cancel_prediction',
-      description: 'Request cancellation of one existing Ergouzi prediction.',
+      description:
+        'Cancel one existing Ergouzi prediction after explicit user confirmation.',
       inputSchema: {
         type: 'object',
         properties: {

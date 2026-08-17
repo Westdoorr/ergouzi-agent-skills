@@ -44,7 +44,7 @@ Never put a key in MCP tool arguments, prompts, source files, or logs.
 | `get_model_schema`    | Read a model's current input and output schema.                  |
 | `create_prediction`   | Create one asynchronous image/video task and return its task ID. |
 | `get_prediction`      | Read a task, with an optional bounded wait.                      |
-| `cancel_prediction`   | Request cancellation of a task.                                  |
+| `cancel_prediction`   | Cancel a task after explicit user confirmation.                  |
 | `download_prediction` | Download successful outputs and write a local receipt.           |
 
 `create_prediction` accepts model-specific fields in `input`. Local media is
@@ -60,6 +60,8 @@ explicit and limited to documented fields:
 Use HTTPS media URLs when an inline data URI would exceed the request limit.
 The server reuses one idempotency key for a bounded transport retry so a
 transient failure does not intentionally create a second billable task.
+Ask for explicit user confirmation before creating a billable task or
+cancelling an existing task.
 It returns structured MCP content as well as readable JSON text, so task IDs,
 statuses, saved paths, and receipt paths remain directly usable by Codex.
 

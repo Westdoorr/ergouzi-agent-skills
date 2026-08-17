@@ -21,7 +21,7 @@ const SERVER_INFO = {
 const server = new Server(SERVER_INFO, {
   capabilities: { tools: { listChanged: false } },
   instructions:
-    'Use media API tools for Ergouzi asynchronous image and video predictions. Before create_prediction, confirm that the user explicitly requested the billable task. Keep task IDs and do not resubmit an existing task.',
+    'Use media API tools for Ergouzi asynchronous image and video predictions. Before create_prediction or cancel_prediction, confirm that the user explicitly requested the billable or destructive action. Keep task IDs and do not resubmit an existing task.',
 });
 
 let activeCredentials;
