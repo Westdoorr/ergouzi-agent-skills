@@ -454,29 +454,31 @@ test('getModelSchema isolates cache entries between credential contexts', async 
 });
 
 test('createPrediction retries a transient response with the same idempotency key', async () => {
-  const keys = [];
-  let attempts = 0;
-  const api = await startServer(async (request, response) => {
-    attempts += 1;
-    keys.push(request.headers['idempotency-key']);
-    await readRequest(request);
-    if (attempts === 1) {
-      json(response, 500, { error: 'temporary' });
-      return;
+  for (const status of [408, 409, 425, 429, 500, 502, 503, 504]) {
+    const keys = [];
+    let attempts = 0;
+    const api = await startServer(async (request, response) => {
+      attempts += 1;
+      keys.push(request.headers['idempotency-key']);
+      await readRequest(request);
+      if (attempts === 1) {
+        json(response, status, { error: 'temporary' });
+        return;
+      }
+      json(response, 201, { id: 'task_retry', status: 'starting' });
+    });
+    try {
+      const prediction = await createPrediction(
+        credentials(api.baseUrl),
+        'ergouzi/e-image',
+        { prompt: 'retry safely' },
+        'retry-key',
+      );
+      assert.equal(prediction.id, 'task_retry');
+      assert.deepEqual(keys, ['retry-key', 'retry-key']);
+    } finally {
+      await api.close();
     }
-    json(response, 201, { id: 'task_retry', status: 'starting' });
-  });
-  try {
-    const prediction = await createPrediction(
-      credentials(api.baseUrl),
-      'ergouzi/e-image',
-      { prompt: 'retry safely' },
-      'retry-key',
-    );
-    assert.equal(prediction.id, 'task_retry');
-    assert.deepEqual(keys, ['retry-key', 'retry-key']);
-  } finally {
-    await api.close();
   }
 });
 

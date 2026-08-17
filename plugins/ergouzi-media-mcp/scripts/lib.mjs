@@ -64,6 +64,9 @@ const MEDIA_MCP_VERSION =
 const MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_API_ERROR_DETAIL_CHARS = 4_096;
 const MODEL_SCHEMA_CACHES = new WeakMap();
+const TRANSIENT_SUBMISSION_STATUSES = new Set([
+  408, 409, 425, 429, 500, 502, 503, 504,
+]);
 const OUTPUT_MEDIA_TYPES = new Set([
   'image/avif',
   'image/jpeg',
@@ -677,7 +680,8 @@ export async function resolveMediaInputs(model, input) {
 function retryable(error) {
   return (
     error instanceof ApiError &&
-    (error.status === undefined || [500, 502, 503, 504].includes(error.status))
+    (error.status === undefined ||
+      TRANSIENT_SUBMISSION_STATUSES.has(error.status))
   );
 }
 

@@ -15543,6 +15543,16 @@ var MEDIA_MCP_VERSION = true ? "0.2.0+codex.20260816153249" : "0.2.0-dev";
 var MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1e3;
 var MAX_API_ERROR_DETAIL_CHARS = 4096;
 var MODEL_SCHEMA_CACHES = /* @__PURE__ */ new WeakMap();
+var TRANSIENT_SUBMISSION_STATUSES = /* @__PURE__ */ new Set([
+  408,
+  409,
+  425,
+  429,
+  500,
+  502,
+  503,
+  504
+]);
 var OUTPUT_MEDIA_TYPES = /* @__PURE__ */ new Set([
   "image/avif",
   "image/jpeg",
@@ -16056,7 +16066,7 @@ async function resolveMediaInputs(model, input) {
   return encoded;
 }
 function retryable(error2) {
-  return error2 instanceof ApiError && (error2.status === void 0 || [500, 502, 503, 504].includes(error2.status));
+  return error2 instanceof ApiError && (error2.status === void 0 || TRANSIENT_SUBMISSION_STATUSES.has(error2.status));
 }
 async function createPrediction(credentials, model, input, idempotencyKey = randomUUID()) {
   validateModel(model);

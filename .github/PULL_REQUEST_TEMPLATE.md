@@ -78,8 +78,8 @@ boundary, and rollback or recovery path.
   - 插件运行时不依赖仓库外文件、私有路径或私有仓库内容。
 - [ ] English and Simplified Chinese user documentation are aligned where behavior changed.
   - 相关英文和简体中文用户文档已保持一致。
-- [ ] I ran local tests or manual validation that a maintainer can reproduce.
-  - 我已在本地运行测试或手动验证，维护者可以据此复核结果。
+- [ ] I ran `npm run check` locally and recorded any focused tests or manual validation that a maintainer can reproduce.
+  - 我已在本地运行 `npm run check`，并记录维护者可以据此复核的聚焦测试或手动验证。
 - [ ] No credential, private endpoint, production data, or private local path is included.
   - 代码中不包含敏感凭据、私有端点、生产数据或私有本地路径。
 - [ ] Third-party source and license information is recorded and permits redistribution.
