@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { once } from 'node:events';
 import {
   chmod,
   cp,
@@ -33,13 +32,24 @@ import {
   toolDefinitions,
 } from '../plugins/ergouzi-media-mcp/scripts/lib.mjs';
 
-async function startServer(handler) {
+async function startServer(handler, host = '127.0.0.1') {
   const server = createServer(handler);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
+  await new Promise((resolve, reject) => {
+    const fail = (error) => {
+      server.off('listening', ready);
+      reject(error);
+    };
+    const ready = () => {
+      server.off('error', fail);
+      resolve();
+    };
+    server.once('error', fail);
+    server.once('listening', ready);
+    server.listen(0, host);
+  });
   const address = server.address();
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://${host.includes(':') ? `[${host}]` : host}:${address.port}`,
     close: () =>
       new Promise((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -262,15 +272,20 @@ test('local media expands home paths and rejects non-MP4 ISO-BMFF brands', async
   );
   const imagePath = path.join(temporary, 'source.png');
   const nonVideoPath = path.join(temporary, 'source.heic');
+  const quickTimePath = path.join(temporary, 'source.mov');
   const nonVideo = Buffer.alloc(16);
   nonVideo.write('ftyp', 4);
   nonVideo.write('heic', 8);
+  const quickTime = Buffer.alloc(16);
+  quickTime.write('ftyp', 4);
+  quickTime.write('qt  ', 8);
   await Promise.all([
     writeFile(
       imagePath,
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     ),
     writeFile(nonVideoPath, nonVideo),
+    writeFile(quickTimePath, quickTime),
   ]);
 
   try {
@@ -285,6 +300,13 @@ test('local media expands home paths and rejects non-MP4 ISO-BMFF brands', async
     await assert.rejects(
       resolveMediaInputs('ergouzi/e-video-animate', {
         video: { $local_file: nonVideoPath },
+        image: { $local_file: imagePath },
+      }),
+      /Unsupported local media type/,
+    );
+    await assert.rejects(
+      resolveMediaInputs('ergouzi/e-video-animate', {
+        video: { $local_file: quickTimePath },
         image: { $local_file: imagePath },
       }),
       /Unsupported local media type/,
@@ -913,6 +935,55 @@ test('output downloads abort when the configured timeout expires', async () => {
     ),
     /timed out/,
   );
+});
+
+test('output downloads include DNS resolution in their timeout', async () => {
+  await assert.rejects(
+    fetchOutput(
+      'https://media.example/result.png',
+      credentials('https://ergouzi.life'),
+      {
+        fetchImpl: async () => {
+          throw new Error('fetch should not start before DNS resolves');
+        },
+        lookup: async () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () => resolve([{ address: '93.184.216.34', family: 4 }]),
+              50,
+            ),
+          ),
+        timeoutMs: 10,
+      },
+    ),
+    /timed out/,
+  );
+});
+
+test('output downloads support IPv6 loopback URLs', async (t) => {
+  let output;
+  try {
+    output = await startServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'image/png' });
+      response.end(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      );
+    }, '::1');
+  } catch {
+    t.skip('IPv6 loopback is unavailable');
+    return;
+  }
+  try {
+    const download = await fetchOutput(
+      `${output.baseUrl}/result.png`,
+      credentials(output.baseUrl),
+    );
+    assert.equal(download.response.status, 200);
+    await download.response.body.cancel();
+    download.release();
+  } finally {
+    await output.close();
+  }
 });
 
 test('bundled SDK server completes MCP initialization after the plugin is copied alone', async () => {

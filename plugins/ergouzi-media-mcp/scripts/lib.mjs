@@ -28,7 +28,7 @@ export const MAX_WAIT_SECONDS = 120;
 export const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const VIDEO_TYPES = new Set(['video/mp4', 'video/quicktime']);
+const VIDEO_TYPES = new Set(['video/mp4']);
 const AUDIO_TYPES = new Set([
   'audio/mpeg',
   'audio/wav',
@@ -468,16 +468,7 @@ function validateMediaReference(value, allowedTypes) {
   return value;
 }
 
-async function detectMediaType(filePath) {
-  const file = await open(filePath, 'r');
-  let data;
-  try {
-    const buffer = Buffer.alloc(512);
-    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-    data = buffer.subarray(0, bytesRead);
-  } finally {
-    await file.close();
-  }
+function detectMediaType(data) {
   if (
     data.length >= 3 &&
     data.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
@@ -516,6 +507,61 @@ async function detectMediaType(filePath) {
   return '';
 }
 
+async function detectMediaTypeFromFile(filePath) {
+  const file = await open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(512);
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+    return detectMediaType(buffer.subarray(0, bytesRead));
+  } finally {
+    await file.close();
+  }
+}
+
+async function readLocalMedia(filePath) {
+  const file = await open(filePath, 'r').catch((error) => {
+    throw new MediaMcpError(`Local media file does not exist: ${filePath}`, {
+      code: 'INVALID_MEDIA_FILE',
+      cause: error,
+    });
+  });
+  try {
+    const fileInfo = await file.stat();
+    if (!fileInfo.isFile())
+      throw new MediaMcpError(`Local media path is not a file: ${filePath}`, {
+        code: 'INVALID_MEDIA_FILE',
+      });
+    if (fileInfo.size === 0)
+      throw new MediaMcpError(`Local media file is empty: ${filePath}`, {
+        code: 'INVALID_MEDIA_FILE',
+      });
+    if (fileInfo.size > MAX_LOCAL_MEDIA_BYTES)
+      throw new MediaMcpError(
+        'Local media exceeds the 3 MiB inline request limit; use an HTTPS URL',
+        { code: 'MEDIA_TOO_LARGE' },
+      );
+    const data = Buffer.alloc(fileInfo.size);
+    let offset = 0;
+    while (offset < data.length) {
+      const { bytesRead } = await file.read(
+        data,
+        offset,
+        data.length - offset,
+        offset,
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset === 0)
+      throw new MediaMcpError(`Local media file is empty: ${filePath}`, {
+        code: 'INVALID_MEDIA_FILE',
+      });
+    return data.subarray(0, offset);
+  } finally {
+    await file.close();
+  }
+}
+
 async function prepareMediaValue(value, field) {
   if (field.multiple) {
     if (!Array.isArray(value))
@@ -540,32 +586,14 @@ async function prepareMediaValue(value, field) {
       { code: 'INVALID_MEDIA_INPUT' },
     );
   const filePath = path.resolve(expandHomePath(value[LOCAL_FILE_KEY]));
-  const fileInfo = await stat(filePath).catch((error) => {
-    throw new MediaMcpError(`Local media file does not exist: ${filePath}`, {
-      code: 'INVALID_MEDIA_FILE',
-      cause: error,
-    });
-  });
-  if (!fileInfo.isFile())
-    throw new MediaMcpError(`Local media path is not a file: ${filePath}`, {
-      code: 'INVALID_MEDIA_FILE',
-    });
-  if (fileInfo.size === 0)
-    throw new MediaMcpError(`Local media file is empty: ${filePath}`, {
-      code: 'INVALID_MEDIA_FILE',
-    });
-  if (fileInfo.size > MAX_LOCAL_MEDIA_BYTES)
-    throw new MediaMcpError(
-      'Local media exceeds the 3 MiB inline request limit; use an HTTPS URL',
-      { code: 'MEDIA_TOO_LARGE' },
-    );
-  const mediaType = await detectMediaType(filePath);
+  const mediaData = await readLocalMedia(filePath);
+  const mediaType = detectMediaType(mediaData);
   if (!field.types.has(mediaType))
     throw new MediaMcpError(
       `Unsupported local media type: ${mediaType || path.extname(filePath)}`,
       { code: 'INVALID_MEDIA_TYPE' },
     );
-  return { filePath, mediaType };
+  return { mediaData, mediaType };
 }
 
 function containsLocalPlaceholder(value) {
@@ -597,10 +625,10 @@ async function encodePreparedMedia(value) {
   if (
     value &&
     typeof value === 'object' &&
-    Object.hasOwn(value, 'filePath') &&
-    Object.hasOwn(value, 'mediaType')
+    Buffer.isBuffer(value.mediaData) &&
+    typeof value.mediaType === 'string'
   ) {
-    return `data:${value.mediaType};base64,${(await readFile(value.filePath)).toString('base64')}`;
+    return `data:${value.mediaType};base64,${value.mediaData.toString('base64')}`;
   }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
@@ -986,9 +1014,11 @@ async function resolveSafeDownloadUrl(
       code: 'UNSAFE_OUTPUT_URL',
     });
   let addresses = [];
-  if (isIP(target.hostname) === 0 && !loopback) {
+  const hostname = target.hostname.replace(/^\[|\]$/g, '');
+  const addressFamily = isIP(hostname);
+  if (addressFamily === 0 && !loopback) {
     try {
-      addresses = await lookup(target.hostname, { all: true, verbatim: true });
+      addresses = await lookup(hostname, { all: true, verbatim: true });
     } catch (error) {
       throw new MediaMcpError(
         `Unable to resolve output hostname: ${target.hostname}`,
@@ -1004,11 +1034,11 @@ async function resolveSafeDownloadUrl(
         'Output URL hostname resolves to a private or local address',
         { code: 'UNSAFE_OUTPUT_URL' },
       );
-  } else if (isIP(target.hostname) !== 0) {
+  } else if (addressFamily !== 0) {
     addresses = [
       {
-        address: target.hostname.replace(/^\[|\]$/g, ''),
-        family: isIP(target.hostname),
+        address: hostname,
+        family: addressFamily,
       },
     ];
   }
@@ -1045,6 +1075,7 @@ export async function fetchPinned(
   { headers = {}, method = 'GET', signal } = {},
 ) {
   const candidates = addresses.length > 0 ? addresses : [undefined];
+  const connectionHostname = url.hostname.replace(/^\[|\]$/g, '');
   let lastError;
   for (const address of candidates) {
     if (signal?.aborted) throw signal.reason;
@@ -1056,11 +1087,13 @@ export async function fetchPinned(
           {
             agent: false,
             headers: requestHeaders,
-            hostname: address?.address || url.hostname,
+            hostname: address?.address || connectionHostname,
             method,
             path: `${url.pathname}${url.search}`,
             port: url.port || undefined,
-            ...(url.protocol === 'https:' ? { servername: url.hostname } : {}),
+            ...(url.protocol === 'https:'
+              ? { servername: connectionHostname }
+              : {}),
             ...(address
               ? {
                   lookup: (_hostname, _options, callback) =>
@@ -1089,6 +1122,27 @@ export async function fetchPinned(
   throw lastError;
 }
 
+function awaitWithAbort(value, signal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener('abort', abort);
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(value).then(
+      (result) => {
+        signal.removeEventListener('abort', abort);
+        resolve(result);
+      },
+      (error) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function fetchOutput(
   url,
   credentials,
@@ -1101,14 +1155,17 @@ export async function fetchOutput(
   const base = new URL(credentials.baseUrl);
   const allowLocalHttp =
     base.protocol === 'http:' && isLocalHostname(base.hostname);
-  let resolved = await resolveSafeDownloadUrl(url, { allowLocalHttp, lookup });
-  let target = resolved.target;
   const timeoutError = new MediaMcpError('Output download timed out', {
     code: 'DOWNLOAD_TIMEOUT',
   });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(timeoutError), timeoutMs);
   try {
+    let resolved = await awaitWithAbort(
+      resolveSafeDownloadUrl(url, { allowLocalHttp, lookup }),
+      controller.signal,
+    );
+    let target = resolved.target;
     for (let redirects = 0; redirects <= 5; redirects += 1) {
       const headers = {
         accept: '*/*',
@@ -1141,10 +1198,13 @@ export async function fetchOutput(
         const finalTarget =
           fetchImpl === fetch
             ? target
-            : await assertSafeDownloadUrl(response.url || target.toString(), {
-                allowLocalHttp,
-                lookup,
-              });
+            : await awaitWithAbort(
+                assertSafeDownloadUrl(response.url || target.toString(), {
+                  allowLocalHttp,
+                  lookup,
+                }),
+                controller.signal,
+              );
         return {
           response,
           target: finalTarget,
@@ -1163,9 +1223,12 @@ export async function fetchOutput(
           'Output download redirect did not include a location',
           { code: 'INVALID_REDIRECT' },
         );
-      resolved = await resolveSafeDownloadUrl(
-        new URL(location, target).toString(),
-        { allowLocalHttp, lookup },
+      resolved = await awaitWithAbort(
+        resolveSafeDownloadUrl(new URL(location, target).toString(), {
+          allowLocalHttp,
+          lookup,
+        }),
+        controller.signal,
       );
       target = resolved.target;
     }
@@ -1289,7 +1352,7 @@ async function downloadOne(response, destination, signal) {
       throw new MediaMcpError('Generated output is empty', {
         code: 'EMPTY_OUTPUT',
       });
-    const mediaType = await detectMediaType(temporary);
+    const mediaType = await detectMediaTypeFromFile(temporary);
     if (!mediaType)
       throw new MediaMcpError(
         'Generated output does not have a recognized media signature',
