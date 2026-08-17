@@ -677,7 +677,7 @@ export async function resolveMediaInputs(model, input) {
 function retryable(error) {
   return (
     error instanceof ApiError &&
-    (error.status === undefined || [502, 503, 504].includes(error.status))
+    (error.status === undefined || [500, 502, 503, 504].includes(error.status))
   );
 }
 
@@ -1233,8 +1233,8 @@ export async function fetchOutput(
   });
 }
 
-function extensionFor(contentType, sourceUrl) {
-  const mediaType = String(contentType).split(';', 1)[0].trim().toLowerCase();
+function extensionForMediaType(contentType) {
+  const mediaType = canonicalMediaType(contentType);
   const known = {
     'image/avif': '.avif',
     'image/jpeg': '.jpg',
@@ -1246,15 +1246,28 @@ function extensionFor(contentType, sourceUrl) {
     'audio/wav': '.wav',
     'audio/flac': '.flac',
   };
-  if (known[mediaType]) return known[mediaType];
+  return known[mediaType] || '';
+}
+
+function extensionFor(contentType, sourceUrl) {
+  const known = extensionForMediaType(contentType);
+  if (known) return known;
   const suffix = path.extname(new URL(sourceUrl).pathname).toLowerCase();
   return /^\.[a-z0-9]{1,8}$/.test(suffix) ? suffix : '.bin';
 }
 
-function destinationForDetectedMediaType(destination, mediaType) {
-  if (path.extname(destination).toLowerCase() !== '.bin') return destination;
-  const extension = extensionFor(mediaType, 'https://ergouzi.life/output');
-  return `${destination.slice(0, -4)}${extension}`;
+function destinationForDetectedMediaType(destination, contentType, mediaType) {
+  const declaredType = canonicalMediaType(contentType);
+  if (declaredType && declaredType !== 'application/octet-stream')
+    return destination;
+  const extension = extensionForMediaType(mediaType);
+  if (!extension) return destination;
+  const currentExtension = path.extname(destination);
+  if (currentExtension.toLowerCase() === extension) return destination;
+  const stem = currentExtension
+    ? destination.slice(0, -currentExtension.length)
+    : destination;
+  return `${stem}${extension}`;
 }
 
 function canonicalMediaType(contentType) {
@@ -1317,24 +1330,24 @@ class ByteLimitTransform extends Transform {
 }
 
 async function downloadOne(response, destination, signal) {
-  const contentLength = response.headers.get('content-length')?.trim();
-  const length =
-    contentLength && /^[0-9]+$/.test(contentLength)
-      ? Number(contentLength)
-      : null;
-  if (length !== null && length > MAX_OUTPUT_BYTES)
-    throw new MediaMcpError(
-      'Generated output exceeds the 2 GiB download limit',
-      { code: 'OUTPUT_TOO_LARGE' },
-    );
-  if (length === 0)
-    throw new MediaMcpError('Generated output is empty', {
-      code: 'EMPTY_OUTPUT',
-    });
-  const contentType = response.headers.get('content-type');
-  assertOutputContentType(contentType);
   const temporary = `${destination}.tmp-${randomUUID()}`;
   try {
+    const contentLength = response.headers.get('content-length')?.trim();
+    const length =
+      contentLength && /^[0-9]+$/.test(contentLength)
+        ? Number(contentLength)
+        : null;
+    if (length !== null && length > MAX_OUTPUT_BYTES)
+      throw new MediaMcpError(
+        'Generated output exceeds the 2 GiB download limit',
+        { code: 'OUTPUT_TOO_LARGE' },
+      );
+    if (length === 0)
+      throw new MediaMcpError('Generated output is empty', {
+        code: 'EMPTY_OUTPUT',
+      });
+    const contentType = response.headers.get('content-type');
+    assertOutputContentType(contentType);
     const source = response.body
       ? Readable.fromWeb(response.body)
       : Readable.from([]);
@@ -1367,7 +1380,7 @@ async function downloadOne(response, destination, signal) {
       );
     const published = await publishTemporaryFile(
       temporary,
-      destinationForDetectedMediaType(destination, mediaType),
+      destinationForDetectedMediaType(destination, contentType, mediaType),
     );
     return {
       path: path.resolve(published),
@@ -1375,6 +1388,7 @@ async function downloadOne(response, destination, signal) {
       media_type: mediaType,
     };
   } catch (error) {
+    await response.body?.cancel().catch(() => {});
     await unlink(temporary).catch(() => {});
     if (signal?.aborted)
       throw new MediaMcpError('Output download timed out', {

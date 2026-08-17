@@ -461,7 +461,7 @@ test('createPrediction retries a transient response with the same idempotency ke
     keys.push(request.headers['idempotency-key']);
     await readRequest(request);
     if (attempts === 1) {
-      json(response, 503, { error: 'temporary' });
+      json(response, 500, { error: 'temporary' });
       return;
     }
     json(response, 201, { id: 'task_retry', status: 'starting' });
@@ -786,7 +786,7 @@ test('downloadPrediction uses detected media extensions for generic outputs', as
       json(response, 200, {
         id: 'task_generic',
         status: 'succeeded',
-        output: `${external.baseUrl}/asset`,
+        output: `${external.baseUrl}/asset.jpg`,
       });
       return;
     }
@@ -805,6 +805,59 @@ test('downloadPrediction uses detected media extensions for generic outputs', as
     assert.equal(path.extname(downloaded.files[0]), '.png');
     assert.deepEqual(await readFile(downloaded.files[0]), body);
   } finally {
+    await api.close();
+    await external.close();
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('downloadPrediction cancels rejected output bodies', async () => {
+  let response;
+  let closed;
+  const closedPromise = new Promise((resolve) => {
+    closed = resolve;
+  });
+  const external = await startServer((_request, output) => {
+    response = output;
+    output.once('close', closed);
+    output.writeHead(200, { 'content-type': 'text/html' });
+    output.write('<html>streaming error page');
+  });
+  const api = await startServer((request, output) => {
+    if (request.url === '/customer/v1/predictions/task_rejected_output') {
+      json(output, 200, {
+        id: 'task_rejected_output',
+        status: 'succeeded',
+        output: `${external.baseUrl}/result`,
+      });
+      return;
+    }
+    json(output, 404, { error: 'not found' });
+  });
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-mcp-rejected-output-'),
+  );
+
+  try {
+    await assert.rejects(
+      downloadPrediction(
+        credentials(api.baseUrl),
+        'task_rejected_output',
+        temporary,
+      ),
+      /unsupported content type/,
+    );
+    await Promise.race([
+      closedPromise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error('output body was not canceled')),
+          250,
+        ),
+      ),
+    ]);
+  } finally {
+    response?.destroy();
     await api.close();
     await external.close();
     await rm(temporary, { recursive: true, force: true });
